@@ -8,25 +8,19 @@ ifndef arch
    arch = AMD64
 endif
 
-CCFLAGS = -Wall -D$(os) -I../src -finline-functions -O3
+CCFLAGS = -Wall -w -D$(os) -I../src -finline-functions -O3 -std=c++17 -I../../Simple-Web-Server -I/usr/include/node/
 
-LDFLAGS = -L../src -ludt -lstdc++ -lpthread -lm -lssl -lcrypto
+LDFLAGS = -L../src -ludt -lstdc++ -lssl -lcrypto -lpthread -lm 
 
 DIR = $(shell pwd)
 
-APP = appserver appclient sendfile recvfile
+APP = recvfile
 
 all: $(APP)
 
 %.o: %.cpp
 	$(C++) $(CCFLAGS) $< -c
 
-appserver: appserver.o
-	$(C++) $^ -o $@ $(LDFLAGS)
-appclient: appclient.o
-	$(C++) $^ -o $@ $(LDFLAGS)
-sendfile: sendfile.o
-	$(C++) $^ -o $@ $(LDFLAGS)
 recvfile: recvfile.o
 	$(C++) $^ -o $@ $(LDFLAGS)
 
