@@ -1,2 +1,1 @@
-# ftlp
-Faster-Than-Light Protocol: Tachyon's Fast, BSD-Style Socket API
+# Faster-Than-Light Protocol: _Tachyon's Fast, BSD-Style Socket API_
