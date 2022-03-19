@@ -147,7 +147,6 @@ double Tachyon::upload(const char *key, const char *filename, v8::Local<v8::Func
     ifs.seekg(0, ios::beg);
     int64_t offset = 0;
 
-    std::cout << "the size is " << size << std::endl;
     if (UDT::ERROR == UDT::send(fhandle, (char *)&size, sizeof(int64_t), 0))
     {
         return TACHYON_ERR::SEND_LENGTH;
