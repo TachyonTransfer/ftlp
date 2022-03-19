@@ -2472,7 +2472,8 @@ int CUDT::packData(CPacket &packet, uint64_t &ts)
       // If no loss, pack a new packet.
 
       // check congestion/flow window limit
-      int cwnd = (m_iFlowWindowSize < (int)m_dCongestionWindow) ? m_iFlowWindowSize : (int)m_dCongestionWindow;
+      // int cwnd = (m_iFlowWindowSize < (int)m_dCongestionWindow) ? m_iFlowWindowSize : (int)m_dCongestionWindow;
+      int cwnd = (int)m_dCongestionWindow;
       if (cwnd >= CSeqNo::seqlen(m_iSndLastAck, CSeqNo::incseq(m_iSndCurrSeqNo)) - m_iRcvUnack)
       {
          if (0 != (payload = m_pSndBuffer->readData(&(packet.m_pcData), packet.m_iMsgNo)))
