@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <udt.h>
+#include <chrono>
 
 using namespace std;
 
@@ -33,11 +34,24 @@ int main(int argc, char *argv[])
 
    UDTSOCKET fhandle = UDT::socket(hints.ai_family, hints.ai_socktype, hints.ai_protocol);
 
+   if (UDT::ERROR == UDT::setsockopt(fhandle, 0, UDT_SNDBUF, new int(20480000), sizeof(int)))
+   {
+      cout << "setsockopt: " << UDT::getlasterror().getErrorMessage() << endl;
+      return 0;
+   }
+   if (UDT::ERROR == UDT::setsockopt(fhandle, 0, UDT_RCVBUF, new int(20480000), sizeof(int)))
+   {
+      cout << "setsockopt: " << UDT::getlasterror().getErrorMessage() << endl;
+      return 0;
+   }
+
    if (0 != getaddrinfo(argv[1], argv[2], &hints, &peer))
    {
       cout << "incorrect server/peer address. " << argv[1] << ":" << argv[2] << endl;
       return -1;
    }
+
+   UDT::setTLS(fhandle, 1);
 
    // connect to the server, implict bind
    if (UDT::ERROR == UDT::connect(fhandle, peer->ai_addr, peer->ai_addrlen))
