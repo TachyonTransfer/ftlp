@@ -16,6 +16,7 @@
 #include <cmath>
 #include "md5.h"
 #include "common.h"
+#include <x86intrin.h>
 
 bool CTimer::m_bUseMicroSecond = false;
 uint64_t CTimer::s_ullCPUFrequency = CTimer::readCPUFrequency();
@@ -72,11 +73,8 @@ void CTimer::rdtsc(uint64_t &x)
    asm("mov %0=ar.itc"
        : "=r"(x)::"memory");
 #elif defined(AMD64)
-   uint32_t lval, hval;
-   asm("rdtsc"
-       : "=a"(lval), "=d"(hval));
-   x = hval;
-   x = (x << 32) | lval;
+   uint ui;
+   x = __rdtscp(&ui);
 #elif defined(WIN32)
    // HANDLE hCurThread = ::GetCurrentThread();
    // DWORD_PTR dwOldMask = ::SetThreadAffinityMask(hCurThread, 1);
@@ -161,18 +159,18 @@ void CTimer::sleepto(uint64_t nexttime)
 #endif
 #else
 #ifndef WIN32
-      timeval now;
+      timespec now;
       timespec timeout;
-      gettimeofday(&now, 0);
-      if (now.tv_usec < 990000)
+      clock_gettime(CLOCK_MONOTONIC, &now);
+      if (now.tv_nsec < 990000000)
       {
          timeout.tv_sec = now.tv_sec;
-         timeout.tv_nsec = (now.tv_usec + 10000) * 1000;
+         timeout.tv_nsec = now.tv_nsec + 10000000;
       }
       else
       {
          timeout.tv_sec = now.tv_sec + 1;
-         timeout.tv_nsec = (now.tv_usec + 10000 - 1000000) * 1000;
+         timeout.tv_nsec = now.tv_nsec + 10000000 - 1000000000;
       }
       pthread_mutex_lock(&m_TickLock);
       pthread_cond_timedwait(&m_TickCond, &m_TickLock, &timeout);
@@ -211,9 +209,9 @@ uint64_t CTimer::getTime()
    // Specific fix may be necessary if rdtsc is not available either.
 
 #ifndef WIN32
-   timeval t;
-   gettimeofday(&t, 0);
-   return t.tv_sec * 1000000ULL + t.tv_usec;
+   struct timespec t2;
+   clock_gettime(CLOCK_MONOTONIC, &t2);
+   return t2.tv_sec * 1000000ULL + t2.tv_nsec / 1000ULL;
 #else
    LARGE_INTEGER ccf;
    HANDLE hCurThread = ::GetCurrentThread();
@@ -245,18 +243,21 @@ void CTimer::triggerEvent()
 void CTimer::waitForEvent()
 {
 #ifndef WIN32
-   timeval now;
+   // timeval now;
    timespec timeout;
-   gettimeofday(&now, 0);
-   if (now.tv_usec < 990000)
+   // gettimeofday(&now, 0);
+
+   timespec now;
+   clock_gettime(CLOCK_MONOTONIC, &now);
+   if (now.tv_nsec < 990000000)
    {
       timeout.tv_sec = now.tv_sec;
-      timeout.tv_nsec = (now.tv_usec + 10000) * 1000;
+      timeout.tv_nsec = now.tv_nsec + 10000000;
    }
    else
    {
       timeout.tv_sec = now.tv_sec + 1;
-      timeout.tv_nsec = (now.tv_usec + 10000 - 1000000) * 1000;
+      timeout.tv_nsec = now.tv_nsec + 10000000 - 1000000000;
    }
    pthread_mutex_lock(&m_EventLock);
    pthread_cond_timedwait(&m_EventCond, &m_EventLock, &timeout);
