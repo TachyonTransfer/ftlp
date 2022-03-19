@@ -51,6 +51,17 @@ int main(int argc, char *argv[])
 
    UDTSOCKET serv = UDT::socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 
+   if (UDT::ERROR == UDT::setsockopt(serv, 0, UDT_SNDBUF, new int(20480000), sizeof(int)))
+   {
+      cout << "setsockopt: " << UDT::getlasterror().getErrorMessage() << endl;
+      return 0;
+   }
+   if (UDT::ERROR == UDT::setsockopt(serv, 0, UDT_RCVBUF, new int(20480000), sizeof(int)))
+   {
+      cout << "setsockopt: " << UDT::getlasterror().getErrorMessage() << endl;
+      return 0;
+   }
+
    // Windows UDP issue
    // For better performance, modify HKLM\System\CurrentControlSet\Services\Afd\Parameters\FastSendDatagramThreshold
 #ifdef WIN32
@@ -75,6 +86,8 @@ int main(int argc, char *argv[])
 
    UDTSOCKET fhandle;
 
+   UDT::setTLS(serv, 0);
+   
    while (true)
    {
       if (UDT::INVALID_SOCK == (fhandle = UDT::accept(serv, (sockaddr *)&clientaddr, &addrlen)))

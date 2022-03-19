@@ -166,6 +166,36 @@ struct CPerfMon
    double mbpsBandwidth;    // estimated bandwidth, in Mb/s
    int byteAvailSndBuf;     // available UDT sender buffer size
    int byteAvailRcvBuf;     // available UDT receiver buffer size
+
+   // added
+   int sendCurrSeqNo; // m_iSndCurrSeqNo;
+   int sendLastAck;   // m_iSndLastAck;
+
+   int recCurrSeqNo;  // m_iRcvCurrSeqNo;
+   int recLastAck;    // m_iRcvLastAck;
+   int recLastAckAck; // m_iRcvLastAckAck;
+   int lastAckTime;   // m_ullLastAckTime;
+   int ackSeqNo;      // m_iAckSeqNo;
+
+   int cWndSize;
+   double pktSndPeriod;
+
+   int ccConWin;
+   int unAckRec;
+   int lossLengthSizeRec;
+   int lossLengthSizeSend;
+
+   double sendDeliveryRate; // m_iDeliveryRate, num of packets arriving * paylod per second;
+
+   double *rtts;
+   double sigmaThreshold;
+   double minR; // min rtt
+   double sd;
+   bool slowStart;
+   int rttVar;
+
+   int bufferSize;
+   int sendLastDataAck;
 };
 
 ////////////////////////////////////////////////////////////////////////////////

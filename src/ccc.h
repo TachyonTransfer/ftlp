@@ -4,6 +4,38 @@
 #include "udt.h"
 #include "packet.h"
 
+class CircularBuffer
+{
+public:
+   int m_iLength;
+   int m_iBufferSize;
+   int m_iIndex;
+   double *m_dBuffer;
+
+   CircularBuffer(int bufferSize);
+   ~CircularBuffer();
+
+   double append(double value);
+
+   bool check(double threshold);
+};
+
+class RunningStats
+{
+public:
+   RunningStats();
+   void Clear();
+   void Push(double x);
+   int NumDataValues() const;
+   double Mean() const;
+   double Variance() const;
+   double StandardDeviation() const;
+
+private:
+   int m_n;
+   double m_oldM, m_newM, m_oldS, m_newS;
+};
+
 class UDT_API CCC
 {
    friend class CUDT;
@@ -156,6 +188,7 @@ private:
    void setSndCurrSeqNo(int32_t seqno);
    void setRcvRate(int rcvrate);
    void setRTT(int rtt);
+   void setVar(int rttVar);
 
 protected:
    const int32_t &m_iSYNInterval; // UDT constant parameter, SYN
@@ -170,7 +203,24 @@ protected:
    int32_t m_iSndCurrSeqNo; // current maximum seq no sent out
    int m_iRcvRate;          // packet arrive rate at receiver side, packets per second
    int m_iRTT;              // current estimated RTT, microsecond
+   double m_iRTTVar;
 
+   double m_dSigmaThreshold;
+   CircularBuffer *m_RTTs;
+   RunningStats m_Welford;
+   RunningStats m_BandwidthCapacity; // esimated theoretical max bandwidth smoothed over a 100 value window
+
+   // lifted up from UDT CC
+   bool m_bSlowStart; // if in slow start phase
+   int m_iNAKCount;   // NAK counter
+   int m_iAvgNAKNum;  // average number of NAKs per congestion
+   int m_iDecCount;   // number of decreases in a congestion epoch
+
+   double minRtt;         // min rtt
+   int minRttWindow;      // number of decreases in a congestion epoch
+   double rttDif;         // dif  between rtt and minRtt
+   double debugWelfordSd; // welford sd
+   int rttCounter;
    char *m_pcParam; // user defined parameter
    int m_iPSize;    // size of m_pcParam
 
@@ -219,15 +269,11 @@ public:
 private:
    int m_iRCInterval;       // UDT Rate control interval
    uint64_t m_LastRCTime;   // last rate increase time
-   bool m_bSlowStart;       // if in slow start phase
    int32_t m_iLastAck;      // last ACKed seq no
    bool m_bLoss;            // if loss happened since last rate increase
    int32_t m_iLastDecSeq;   // max pkt seq no sent out when last decrease happened
    double m_dLastDecPeriod; // value of pktsndperiod when last decrease happened
-   int m_iNAKCount;         // NAK counter
    int m_iDecRandom;        // random threshold on decrease by number of loss events
-   int m_iAvgNAKNum;        // average number of NAKs per congestion
-   int m_iDecCount;         // number of decreases in a congestion epoch
 };
 
 #endif
