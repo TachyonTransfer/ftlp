@@ -10,7 +10,7 @@ endif
 
 CCFLAGS = -Wall -D$(os) -I../src -finline-functions -O3
 
-LDFLAGS = -L../src -ludt -lstdc++ -lpthread -lm
+LDFLAGS = -L../src -ludt -lstdc++ -lpthread -lm -lssl -lcrypto
 
 DIR = $(shell pwd)
 

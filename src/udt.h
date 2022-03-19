@@ -16,6 +16,10 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <memory>
+#include <openssl/bio.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -279,6 +283,7 @@ namespace UDT
 
    UDT_API int startup();
    UDT_API int cleanup();
+   UDT_API void setTLS(UDTSOCKET u, int mode);
    UDT_API UDTSOCKET socket(int af, int type, int protocol);
    UDT_API int bind(UDTSOCKET u, const struct sockaddr *name, int namelen);
    UDT_API int bind2(UDTSOCKET u, UDPSOCKET udpsock);
@@ -321,5 +326,41 @@ namespace UDT
    UDT_API UDTSTATUS getsockstate(UDTSOCKET u);
 
 } // namespace UDT
+
+template <class T>
+struct DeAllocOf;
+template <>
+struct DeAllocOf<BIO>
+{
+   void operator()(BIO *bio) {}
+};
+template <>
+struct DeAllocOf<BIO_METHOD>
+{
+   void operator()(BIO_METHOD *method) {}
+};
+template <>
+struct DeAllocOf<SSL>
+{
+   void operator()(SSL *p) { SSL_free(p); }
+};
+template <>
+struct DeAllocOf<SSL_CTX>
+{
+   void operator()(SSL_CTX *ctx) { SSL_CTX_free(ctx); }
+};
+
+template <class T>
+using uptr = std::unique_ptr<T, DeAllocOf<T>>;
+template <class T>
+using sptr = std::shared_ptr<T>;
+
+typedef struct ssl_ctx_s
+{
+   UDTSOCKET socket;
+   BIO *bio;
+   BIO_METHOD *biom;
+   uptr<SSL> ssl;
+} ssl_ctx_t;
 
 #endif
