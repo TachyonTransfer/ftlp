@@ -20,6 +20,9 @@
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/ssl.h>
+#include <libplatform/libplatform.h>
+#include <v8.h>
+#include <v8-platform.h>
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -329,9 +332,9 @@ namespace UDT
    UDT_API int recv(UDTSOCKET u, char *buf, int len, int flags);
    UDT_API int sendmsg(UDTSOCKET u, const char *buf, int len, int ttl = -1, bool inorder = false);
    UDT_API int recvmsg(UDTSOCKET u, char *buf, int len);
-   UDT_API int64_t sendfile(UDTSOCKET u, std::fstream &ifs, int64_t &offset, int64_t size, int block = 364000);
+   UDT_API int64_t sendfile(UDTSOCKET u, std::fstream &ifs, int64_t &offset, int64_t size, int block, v8::Local<v8::Function> func, v8::Local<v8::Context> ctx, v8::Isolate *isolate);
    UDT_API int64_t recvfile(UDTSOCKET u, std::fstream &ofs, int64_t &offset, int64_t size, int block = 7280000);
-   UDT_API int64_t sendfile2(UDTSOCKET u, const char *path, int64_t *offset, int64_t size, int block = 364000);
+   UDT_API int64_t sendfile2(UDTSOCKET u, const char *path, int64_t *offset, int64_t size, int block, v8::Local<v8::Function> func, v8::Local<v8::Context> ctx, v8::Isolate *isolate);
    UDT_API int64_t recvfile2(UDTSOCKET u, const char *path, int64_t *offset, int64_t size, int block = 7280000);
 
    // select and selectEX are DEPRECATED; please use epoll.

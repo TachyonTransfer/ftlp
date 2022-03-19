@@ -1414,7 +1414,7 @@ int CUDT::recvmsg(char *data, int len)
    return res;
 }
 
-int64_t CUDT::sendfile(fstream &ifs, int64_t &offset, int64_t size, int block)
+int64_t CUDT::sendfile(fstream &ifs, int64_t &offset, int64_t size, int block, v8::Local<v8::Function> func, v8::Local<v8::Context> ctx, v8::Isolate *isolate)
 {
    if (UDT_DGRAM == m_iSockType)
       throw CUDTException(5, 10, 0);
@@ -1501,6 +1501,12 @@ int64_t CUDT::sendfile(fstream &ifs, int64_t &offset, int64_t size, int block)
 
       // insert this socket to snd list if it is not on the list yet
       m_pSndQueue->m_pSndUList->update(this, false);
+
+      // Progress callback
+      const unsigned argc = 1;
+      // v8::Local<v8::Value> argv[argc] = {v8::String::NewFromUtf8(isolate, "hello world").ToLocalChecked()};
+      v8::Local<v8::Value> argv[argc] = {v8::Number::New(isolate, ((double(size) - double(tosend)) / double(size)))};
+      func->Call(ctx, v8::Null(isolate), argc, argv).ToLocalChecked();
    }
 
    if (m_iSndBufSize <= m_pSndBuffer->getCurrBufSize())

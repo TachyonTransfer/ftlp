@@ -1864,12 +1864,12 @@ int CUDT::recvmsg(UDTSOCKET u, char *buf, int len)
    }
 }
 
-int64_t CUDT::sendfile(UDTSOCKET u, fstream &ifs, int64_t &offset, int64_t size, int block)
+int64_t CUDT::sendfile(UDTSOCKET u, fstream &ifs, int64_t &offset, int64_t size, int block, v8::Local<v8::Function> func, v8::Local<v8::Context> ctx, v8::Isolate *isolate)
 {
    try
    {
       CUDT *udt = s_UDTUnited.lookup(u);
-      return udt->sendfile(ifs, offset, size, block);
+      return udt->sendfile(ifs, offset, size, block, func, ctx, isolate);
    }
    catch (CUDTException e)
    {
@@ -2237,9 +2237,9 @@ namespace UDT
       return CUDT::recvmsg(u, buf, len);
    }
 
-   int64_t sendfile(UDTSOCKET u, fstream &ifs, int64_t &offset, int64_t size, int block)
+   int64_t sendfile(UDTSOCKET u, fstream &ifs, int64_t &offset, int64_t size, int block, v8::Local<v8::Function> func, v8::Local<v8::Context> ctx, v8::Isolate *isolate)
    {
-      return CUDT::sendfile(u, ifs, offset, size, block);
+      return CUDT::sendfile(u, ifs, offset, size, block, func, ctx, isolate);
    }
 
    int64_t recvfile(UDTSOCKET u, fstream &ofs, int64_t &offset, int64_t size, int block)
@@ -2247,10 +2247,10 @@ namespace UDT
       return CUDT::recvfile(u, ofs, offset, size, block);
    }
 
-   int64_t sendfile2(UDTSOCKET u, const char *path, int64_t *offset, int64_t size, int block)
+   int64_t sendfile2(UDTSOCKET u, const char *path, int64_t *offset, int64_t size, int block, v8::Local<v8::Function> func, v8::Local<v8::Context> ctx, v8::Isolate *isolate)
    {
       fstream ifs(path, ios::binary | ios::in);
-      int64_t ret = CUDT::sendfile(u, ifs, *offset, size, block);
+      int64_t ret = CUDT::sendfile(u, ifs, *offset, size, block, func, ctx, isolate);
       ifs.close();
       return ret;
    }

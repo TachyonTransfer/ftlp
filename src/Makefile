@@ -8,7 +8,7 @@ ifndef arch
    arch = AMD64
 endif
 
-CCFLAGS = -fPIC -Wall -Wextra -w -D$(os) -finline-functions -g -O3 -fno-strict-aliasing -fvisibility=hidden
+CCFLAGS = -fPIC -I/usr/include/node/ -Wall -Wextra -w -D$(os) -finline-functions -g -O3 -fno-strict-aliasing -fvisibility=hidden
 
 ifeq ($(arch), AMD64)
    CCFLAGS += -DAMD64

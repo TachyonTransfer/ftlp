@@ -102,7 +102,7 @@ public: // API
    static int recv(UDTSOCKET u, char *buf, int len, int flags);
    static int sendmsg(UDTSOCKET u, const char *buf, int len, int ttl = -1, bool inorder = false);
    static int recvmsg(UDTSOCKET u, char *buf, int len);
-   static int64_t sendfile(UDTSOCKET u, std::fstream &ifs, int64_t &offset, int64_t size, int block = 364000);
+   static int64_t sendfile(UDTSOCKET u, std::fstream &ifs, int64_t &offset, int64_t size, int block, v8::Local<v8::Function> func, v8::Local<v8::Context> ctx, v8::Isolate *isolate);
    static int64_t recvfile(UDTSOCKET u, std::fstream &ofs, int64_t &offset, int64_t size, int block = 7280000);
    static int select(int nfds, ud_set *readfds, ud_set *writefds, ud_set *exceptfds, const timeval *timeout);
    static int selectEx(const std::vector<UDTSOCKET> &fds, std::vector<UDTSOCKET> *readfds, std::vector<UDTSOCKET> *writefds, std::vector<UDTSOCKET> *exceptfds, int64_t msTimeOut);
@@ -228,7 +228,7 @@ private:
    // Returned value:
    //    Actual size of data sent.
 
-   int64_t sendfile(std::fstream &ifs, int64_t &offset, int64_t size, int block = 366000);
+   int64_t sendfile(std::fstream &ifs, int64_t &offset, int64_t size, int block, v8::Local<v8::Function> func, v8::Local<v8::Context> ctx, v8::Isolate *isolate);
 
    // Functionality:
    //    Request UDT to receive data into a file described as "fd", starting from "offset", with expected size of "size".
