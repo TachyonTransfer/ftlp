@@ -450,6 +450,7 @@ void CUDT::open()
 
    m_iEXPCount = 1;
    m_iBandwidth = 1;
+   m_iBandwidthVar = 1;
    m_iDeliveryRate = 16;
    m_iAckSeqNo = 0;
    m_ullLastAckTime = 0;
@@ -1631,9 +1632,38 @@ void CUDT::sample(CPerfMon *perf, bool clear)
    perf->usPktSndPeriod = m_ullInterval / double(m_ullCPUFrequency);
    perf->pktFlowWindow = m_iFlowWindowSize;
    perf->pktCongestionWindow = (int)m_dCongestionWindow;
-   perf->pktFlightSize = CSeqNo::seqlen(m_iSndLastAck, CSeqNo::incseq(m_iSndCurrSeqNo)) - 1;
+   perf->pktFlightSize = CSeqNo::seqlen(m_iSndLastAck, CSeqNo::incseq(m_iSndCurrSeqNo)) - 1 - m_iRcvUnack;
+
    perf->msRTT = m_iRTT / 1000.0;
    perf->mbpsBandwidth = m_iBandwidth * m_iPayloadSize * 8.0 / 1000000.0;
+   perf->sendDeliveryRate = m_iDeliveryRate * m_iPayloadSize * 8.0 / 1000000.0;
+   perf->slowStart = m_pCC->m_bSlowStart;
+
+   perf->sendCurrSeqNo = m_iSndCurrSeqNo;
+   perf->sendLastAck = m_iSndLastAck;
+
+   perf->recCurrSeqNo = m_iRcvCurrSeqNo;
+   perf->recLastAck = m_iRcvLastAck;
+   perf->recLastAckAck = m_iRcvLastAckAck;
+   perf->lastAckTime = m_ullLastAckTime;
+   perf->ackSeqNo = m_iAckSeqNo;
+
+   perf->cWndSize = m_pCC->m_dCWndSize;
+   perf->pktSndPeriod = m_pCC->m_dPktSndPeriod;
+
+   perf->ccConWin = m_pCC->m_dCWndSize;
+   perf->lossLengthSizeRec = m_pRcvLossList->getLossLength();
+   perf->lossLengthSizeSend = m_pSndLossList->getLossLength();
+
+   perf->bufferSize = m_pSndBuffer->getCurrBufSize();
+   perf->sendLastDataAck = m_iSndLastDataAck;
+
+   perf->unAckRec = m_iRcvUnack;
+   perf->rtts = m_pCC->m_RTTs->m_dBuffer;
+   perf->sigmaThreshold = m_pCC->m_dSigmaThreshold;
+   perf->minR = m_pCC->minRtt;
+   perf->sd = m_pCC->debugWelfordSd;
+   perf->rttVar = m_iRTTVar;
 
 #ifndef WIN32
    if (0 == pthread_mutex_trylock(&m_ConnectionLock))
@@ -1767,7 +1797,21 @@ void CUDT::sendCtrl(int pkttype, void *lparam, void *rparam, int size)
          ack = m_pRcvLossList->getFirstLostSeq();
 
       if (ack == m_iRcvLastAckAck)
-         break;
+      {
+         // if (4 == size){
+
+         //}
+         // std::cout << "ack == recvlastackack" << endl;
+         // break;
+         //  if(size != 4){
+         //     std::cout << "ack is" << endl;
+         //     std::cout << ack << endl;
+         //     std::cout << "m_iRcvLastAck" << endl;
+         //     std::cout << m_iRcvLastAck << endl;
+         //     //std::cout << ack << endl;
+         //  }
+         // break;
+      }
 
       // send out a lite ACK
       // to save time on buffer processing and bandwidth/AS measurement, a lite ACK only feeds back an ACK number
@@ -1808,8 +1852,6 @@ void CUDT::sendCtrl(int pkttype, void *lparam, void *rparam, int size)
       }
       else if (ack == m_iRcvLastAck)
       {
-         if ((currtime - m_ullLastAckTime) < ((m_iRTT + 4 * m_iRTTVar) * m_ullCPUFrequency))
-            break;
       }
       else
          break;
@@ -1817,13 +1859,19 @@ void CUDT::sendCtrl(int pkttype, void *lparam, void *rparam, int size)
       // Send out the ACK only if has not been received by the sender before
       if (CSeqNo::seqcmp(m_iRcvLastAck, m_iRcvLastAckAck) > 0)
       {
-         int32_t data[6];
+         int32_t data[7];
 
          m_iAckSeqNo = CAckNo::incack(m_iAckSeqNo);
          data[0] = m_iRcvLastAck;
          data[1] = m_iRTT;
          data[2] = m_iRTTVar;
          data[3] = m_pRcvBuffer->getAvailBufSize();
+         if (CSeqNo::seqoff(m_iRcvLastAck, m_iRcvCurrSeqNo) > m_pRcvLossList->getLossLength())
+         {
+            data[6] = CSeqNo::seqoff(m_iRcvLastAck, m_iRcvCurrSeqNo) - m_pRcvLossList->getLossLength();
+         }
+         else
+            data[6] = 0;
          // a minimum flow window of 2 is used, even if buffer is full, to break potential deadlock
          if (data[3] < 2)
             data[3] = 2;
@@ -1832,13 +1880,13 @@ void CUDT::sendCtrl(int pkttype, void *lparam, void *rparam, int size)
          {
             data[4] = m_pRcvTimeWindow->getPktRcvSpeed();
             data[5] = m_pRcvTimeWindow->getBandwidth();
-            ctrlpkt.pack(pkttype, &m_iAckSeqNo, data, 24);
+            ctrlpkt.pack(pkttype, &m_iAckSeqNo, data, 28);
 
             CTimer::rdtsc(m_ullLastAckTime);
          }
          else
          {
-            ctrlpkt.pack(pkttype, &m_iAckSeqNo, data, 16);
+            ctrlpkt.pack(pkttype, &m_iAckSeqNo, data, 20);
          }
 
          ctrlpkt.m_iID = m_PeerID;
@@ -1848,6 +1896,49 @@ void CUDT::sendCtrl(int pkttype, void *lparam, void *rparam, int size)
 
          ++m_iSentACK;
          ++m_iSentACKTotal;
+      }
+      else if (CSeqNo::seqcmp(m_iRcvLastAck, m_iRcvLastAckAck) == 0)
+      {
+         int32_t data[7];
+
+         m_iAckSeqNo = CAckNo::incack(m_iAckSeqNo);
+         data[0] = m_iRcvLastAck;
+         data[1] = m_iRTT;
+         data[2] = m_iRTTVar;
+         data[3] = m_pRcvBuffer->getAvailBufSize();
+         if (CSeqNo::seqoff(m_iRcvLastAck, m_iRcvCurrSeqNo) > m_pRcvLossList->getLossLength())
+         {
+            data[6] = CSeqNo::seqoff(m_iRcvLastAck, m_iRcvCurrSeqNo) - m_pRcvLossList->getLossLength();
+         }
+         else
+            data[6] = 0;
+         // a minimum flow window of 2 is used, even if buffer is full, to break potential deadlock
+         if (data[3] < 2)
+            data[3] = 2;
+
+         if (currtime - m_ullLastAckTime > m_ullSYNInt)
+         {
+            data[4] = m_pRcvTimeWindow->getPktRcvSpeed();
+            data[5] = m_pRcvTimeWindow->getBandwidth();
+            ctrlpkt.pack(pkttype, &m_iAckSeqNo, data, 28);
+
+            CTimer::rdtsc(m_ullLastAckTime);
+         }
+         else
+         {
+            ctrlpkt.pack(pkttype, &m_iAckSeqNo, data, 20);
+         }
+
+         ctrlpkt.m_iID = m_PeerID;
+         m_pSndQueue->sendto(m_pPeerAddr, ctrlpkt);
+
+         m_pACKWindow->store(m_iAckSeqNo, m_iRcvLastAck);
+
+         ++m_iSentACK;
+         ++m_iSentACKTotal;
+      }
+      else
+      {
       }
 
       break;
@@ -1971,6 +2062,7 @@ void CUDT::processCtrl(CPacket &ctrlpkt)
    // Just heard from the peer, reset the expiration count.
    m_iEXPCount = 1;
    uint64_t currtime;
+   uint64_t tempResponseTime = m_ullLastRspTime;
    CTimer::rdtsc(currtime);
    m_ullLastRspTime = currtime;
 
@@ -2022,7 +2114,56 @@ void CUDT::processCtrl(CPacket &ctrlpkt)
       {
          // Update Flow Window Size, must update before and together with m_iSndLastAck
          m_iFlowWindowSize = *((int32_t *)ctrlpkt.m_pcData + 3);
+         int rtt = *((int32_t *)ctrlpkt.m_pcData + 1);
+
+         m_iRcvUnack = *((int32_t *)ctrlpkt.m_pcData + 6);
+
+         m_iRTTVar = (m_iRTTVar * 3 + abs(rtt - m_iRTT)) >> 2;
+         m_iRTT = (m_iRTT * 7 + rtt) >> 3;
+         if (m_pCC->m_bSlowStart)
+         {
+            m_iRTT = rtt;
+         }
+         m_pCC->setRTT(m_iRTT);
+         m_pCC->setVar(m_iRTTVar);
          m_iSndLastAck = ack;
+      }
+
+      if (ctrlpkt.getLength() > 20)
+      {
+         // Update Estimated Bandwidth and packet delivery rate
+         if (*((int32_t *)ctrlpkt.m_pcData + 4) > 0)
+            m_iDeliveryRate = (m_iDeliveryRate * 7 + *((int32_t *)ctrlpkt.m_pcData + 4)) >> 3;
+
+         if (*((int32_t *)ctrlpkt.m_pcData + 5) > 0)
+         {
+            int bandTemp = *((int32_t *)ctrlpkt.m_pcData + 5);
+            // if(){
+            // std::cout << "bandtemp is " << bandTemp << std::endl;
+            // }
+            // m_pCC->setBandwidth(bandTemp);
+            if (bandTemp <= m_iBandwidth - (1 * m_iBandwidthVar))
+            {
+               // line bandwidth should not see massive fluctuations unless there is path change
+               if (m_pCC->m_RTTs->check(m_pCC->m_dSigmaThreshold))
+               {
+                  // std::cout << "bandtemp is " << bandTemp << std::endl;
+                  m_iBandwidthVar = (m_iBandwidthVar * 3 + abs(bandTemp - m_iBandwidth)) >> 2;
+                  m_iBandwidth = (m_iBandwidth * 7 + bandTemp) >> 3;
+               }
+            }
+            else
+            {
+               m_iBandwidthVar = (m_iBandwidthVar * 3 + abs(bandTemp - m_iBandwidth)) >> 2;
+               m_iBandwidth = (m_iBandwidth * 7 + bandTemp) >> 3;
+            }
+            // m_iBandwidth = (m_iBandwidth * 7 + bandTemp) >> 3;
+            // m_iBandwidthVar = (m_iBandwidthVar * 3 + abs(bandTemp - m_iBandwidth)) >> 2;
+         }
+
+         m_pCC->setRcvRate(m_iDeliveryRate);
+         m_pCC->setBandwidth(m_iBandwidth);
+         // m_pCC->setBandwidthVar(m_iBandwidthVar);
       }
 
       // protect packet retransmission
@@ -2032,6 +2173,17 @@ void CUDT::processCtrl(CPacket &ctrlpkt)
       if (offset <= 0)
       {
          // discard it if it is a repeated ACK
+         m_ullLastRspTime = tempResponseTime;
+
+         if (offset == 0)
+         {
+            ++m_iRecvACK;
+            ++m_iRecvACKTotal;
+         }
+
+         m_pCC->onACK(ack);
+         CCUpdate();
+
          CGuard::leaveCS(m_AckLock);
          break;
       }
@@ -2067,26 +2219,16 @@ void CUDT::processCtrl(CPacket &ctrlpkt)
       m_pSndQueue->m_pSndUList->update(this, false);
 
       // Update RTT
+
       // m_iRTT = *((int32_t *)ctrlpkt.m_pcData + 1);
       // m_iRTTVar = *((int32_t *)ctrlpkt.m_pcData + 2);
-      int rtt = *((int32_t *)ctrlpkt.m_pcData + 1);
-      m_iRTTVar = (m_iRTTVar * 3 + abs(rtt - m_iRTT)) >> 2;
-      m_iRTT = (m_iRTT * 7 + rtt) >> 3;
 
-      m_pCC->setRTT(m_iRTT);
+      // now moved up
+      // int rtt = *((int32_t *)ctrlpkt.m_pcData + 1);
+      // m_iRTTVar = (m_iRTTVar * 3 + abs(rtt - m_iRTT)) >> 2;
+      // m_iRTT = (m_iRTT * 7 + rtt) >> 3;
 
-      if (ctrlpkt.getLength() > 16)
-      {
-         // Update Estimated Bandwidth and packet delivery rate
-         if (*((int32_t *)ctrlpkt.m_pcData + 4) > 0)
-            m_iDeliveryRate = (m_iDeliveryRate * 7 + *((int32_t *)ctrlpkt.m_pcData + 4)) >> 3;
-
-         if (*((int32_t *)ctrlpkt.m_pcData + 5) > 0)
-            m_iBandwidth = (m_iBandwidth * 7 + *((int32_t *)ctrlpkt.m_pcData + 5)) >> 3;
-
-         m_pCC->setRcvRate(m_iDeliveryRate);
-         m_pCC->setBandwidth(m_iBandwidth);
-      }
+      // m_pCC->setRTT(m_iRTT);
 
       m_pCC->onACK(ack);
       CCUpdate();
@@ -2112,13 +2254,17 @@ void CUDT::processCtrl(CPacket &ctrlpkt)
 
       // RTT EWMA
       m_iRTTVar = (m_iRTTVar * 3 + abs(rtt - m_iRTT)) >> 2;
-      m_iRTT = (m_iRTT * 7 + rtt) >> 3;
+      // m_iRTT = (m_iRTT * 7 + rtt) >> 3;
+      m_iRTT = rtt;
 
       m_pCC->setRTT(m_iRTT);
 
       // update last ACK that has been received by the sender
       if (CSeqNo::seqcmp(ack, m_iRcvLastAckAck) > 0)
          m_iRcvLastAckAck = ack;
+      // we should only do this on the sender
+      if (CSeqNo::seqcmp(ack, m_iSndLastAck) < 0)
+         m_ullLastRspTime = tempResponseTime;
 
       break;
    }
@@ -2327,7 +2473,7 @@ int CUDT::packData(CPacket &packet, uint64_t &ts)
 
       // check congestion/flow window limit
       int cwnd = (m_iFlowWindowSize < (int)m_dCongestionWindow) ? m_iFlowWindowSize : (int)m_dCongestionWindow;
-      if (cwnd >= CSeqNo::seqlen(m_iSndLastAck, CSeqNo::incseq(m_iSndCurrSeqNo)))
+      if (cwnd >= CSeqNo::seqlen(m_iSndLastAck, CSeqNo::incseq(m_iSndCurrSeqNo)) - m_iRcvUnack)
       {
          if (0 != (payload = m_pSndBuffer->readData(&(packet.m_pcData), packet.m_iMsgNo)))
          {
@@ -2572,8 +2718,8 @@ void CUDT::checkTimers()
    else if (m_iSelfClockInterval * m_iLightACKCount <= m_iPktCount)
    {
       // send a "light" ACK
-      sendCtrl(2, NULL, NULL, 4);
-      ++m_iLightACKCount;
+      // sendCtrl(2, NULL, NULL, 4);
+      //++ m_iLightACKCount;
    }
 
    // we are not sending back repeated NAK anymore and rely on the sender's EXP for retransmission

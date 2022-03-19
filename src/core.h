@@ -326,6 +326,7 @@ private:                        // Status
 
    int m_iEXPCount;     // Expiration counter
    int m_iBandwidth;    // Estimated bandwidth, number of packets per second
+   int m_iBandwidthVar; // Estimated bandwidth var
    int m_iRTT;          // RTT, in microseconds
    int m_iRTTVar;       // RTT variance
    int m_iDeliveryRate; // Packet arrival rate at the receiver side
@@ -444,6 +445,7 @@ private:                       // Timers
 
    int m_iPktCount;      // packet counter for ACK
    int m_iLightACKCount; // light ACK counter
+   int m_iRcvUnack;      // number of packets that are received on the receiver but havent been acked due to lost packets
 
    uint64_t m_ullTargetTime; // scheduled time of next packet sending
 

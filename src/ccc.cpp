@@ -2,6 +2,98 @@
 #include "ccc.h"
 #include <cmath>
 #include <cstring>
+#include <float.h>
+
+CircularBuffer::CircularBuffer(int bufferSize) : m_iBufferSize(bufferSize),
+                                                 m_iLength(0),
+                                                 m_iIndex(0)
+{
+   m_dBuffer = new double[m_iBufferSize];
+}
+
+CircularBuffer::~CircularBuffer()
+{
+   delete[] m_dBuffer;
+}
+
+double CircularBuffer::append(double value)
+{
+   double poppedValue = NULL;
+   if (m_iLength == m_iBufferSize)
+   {
+      poppedValue = m_dBuffer[m_iIndex];
+   }
+   else
+   {
+      m_iLength++;
+   }
+   m_dBuffer[m_iIndex] = value;
+   m_iIndex = (m_iIndex + 1) % m_iBufferSize;
+   return poppedValue;
+}
+
+bool CircularBuffer::check(double threshold)
+{
+   for (int i = 0; i < m_iLength; i++)
+   {
+      if (m_dBuffer[i] < threshold)
+      {
+         return false;
+      }
+   }
+   return true;
+}
+
+RunningStats::RunningStats()
+{
+   Clear();
+}
+
+void RunningStats::Clear()
+{
+   m_n = 0;
+}
+
+void RunningStats::Push(double x)
+{
+   m_n++;
+
+   // See Knuth TAOCP vol 2, 3rd edition, page 232
+   if (m_n == 1)
+   {
+      m_oldM = m_newM = x;
+      m_oldS = 0.0;
+   }
+   else
+   {
+      m_newM = m_oldM + (x - m_oldM) / m_n;
+      m_newS = m_oldS + (x - m_oldM) * (x - m_newM);
+
+      // set up for next iteration
+      m_oldM = m_newM;
+      m_oldS = m_newS;
+   }
+}
+
+int RunningStats::NumDataValues() const
+{
+   return m_n;
+}
+
+double RunningStats::Mean() const
+{
+   return (m_n > 0) ? m_newM : 0.0;
+}
+
+double RunningStats::Variance() const
+{
+   return ((m_n > 1) ? m_newS / (m_n - 1) : 0.0);
+}
+
+double RunningStats::StandardDeviation() const
+{
+   return sqrt(Variance());
+}
 
 CCC::CCC() : m_iSYNInterval(CUDT::m_iSYNInterval),
              m_dPktSndPeriod(1.0),
@@ -19,8 +111,19 @@ CCC::CCC() : m_iSYNInterval(CUDT::m_iSYNInterval),
              m_iACKInterval(0),
              m_bUserDefinedRTO(false),
              m_iRTO(-1),
-             m_PerfInfo()
+             m_PerfInfo(),
+             m_iAvgNAKNum(), // lifted up
+             m_iDecCount(),  // lifted up
+             m_iNAKCount(),  // lifeted up
+             m_bSlowStart(), // lifted up
+             minRtt(INFINITY),
+             minRttWindow(1000),
+             rttDif(0),
+             debugWelfordSd(0),
+             rttCounter(1),
+             m_dSigmaThreshold(2) // Adjustable
 {
+   m_RTTs = new CircularBuffer(1);
 }
 
 CCC::~CCC()
@@ -79,6 +182,12 @@ void CCC::setMSS(int mss)
 void CCC::setBandwidth(int bw)
 {
    m_iBandwidth = bw;
+   if (rttCounter < minRttWindow)
+   {
+   }
+   else
+   {
+   }
 }
 
 void CCC::setSndCurrSeqNo(int32_t seqno)
@@ -96,9 +205,41 @@ void CCC::setMaxCWndSize(int cwnd)
    m_dMaxCWndSize = cwnd;
 }
 
+void CCC::setVar(int rttVar)
+{
+   m_iRTTVar = rttVar;
+}
+
 void CCC::setRTT(int rtt)
 {
    m_iRTT = rtt;
+   if (m_bSlowStart)
+   {
+      minRtt = m_iRTT;
+      return;
+   }
+
+   if (rttCounter < minRttWindow)
+   {
+      rttCounter = rttCounter + 1;
+      minRtt = fmin(minRtt, m_iRTT);
+      rttDif = m_iRTT - minRtt;
+      debugWelfordSd = m_Welford.StandardDeviation() > 0 ? m_Welford.StandardDeviation() : 0;
+      // m_RTTs->append(m_Welford.StandardDeviation() > 0 ?  (rttDif / m_Welford.StandardDeviation()) : 0);
+      m_RTTs->append(m_iRTTVar > 0 ? (rttDif / m_iRTTVar) : 0);
+      m_Welford.Push(rttDif);
+   }
+   else
+   {
+      rttDif = m_iRTT - minRtt;
+      debugWelfordSd = m_Welford.StandardDeviation() > 0 ? m_Welford.StandardDeviation() : 0;
+      // m_RTTs->append(m_Welford.StandardDeviation() > 0 ?  (rttDif / m_Welford.StandardDeviation()) : 0);
+      m_RTTs->append(m_iRTTVar > 0 ? (rttDif / m_iRTTVar) : 0);
+      m_Welford.Push(rttDif);
+      rttCounter = 1;
+      minRtt = rtt;
+      m_Welford.Clear();
+   }
 }
 
 void CCC::setUserParam(const char *param, int size)
@@ -112,15 +253,11 @@ void CCC::setUserParam(const char *param, int size)
 //
 CUDTCC::CUDTCC() : m_iRCInterval(),
                    m_LastRCTime(),
-                   m_bSlowStart(),
                    m_iLastAck(),
                    m_bLoss(),
                    m_iLastDecSeq(),
                    m_dLastDecPeriod(),
-                   m_iNAKCount(),
-                   m_iDecRandom(),
-                   m_iAvgNAKNum(),
-                   m_iDecCount()
+                   m_iDecRandom()
 {
 }
 
@@ -223,30 +360,35 @@ void CUDTCC::onLoss(const int32_t *losslist, int)
       m_dPktSndPeriod = m_dCWndSize / (m_iRTT + m_iRCInterval);
    }
 
-   m_bLoss = true;
+   // we check losses in new way
+   //   m_bLoss = true;
 
-   if (CSeqNo::seqcmp(losslist[0] & 0x7FFFFFFF, m_iLastDecSeq) > 0)
+   if (m_RTTs->check(m_dSigmaThreshold))
    {
-      m_dLastDecPeriod = m_dPktSndPeriod;
-      m_dPktSndPeriod = ceil(m_dPktSndPeriod * 1.125);
+      m_bLoss = true;
+      if (CSeqNo::seqcmp(losslist[0] & 0x7FFFFFFF, m_iLastDecSeq) > 0)
+      {
+         m_dLastDecPeriod = m_dPktSndPeriod;
+         m_dPktSndPeriod = ceil(m_dPktSndPeriod * 1.125);
 
-      m_iAvgNAKNum = (int)ceil(m_iAvgNAKNum * 0.875 + m_iNAKCount * 0.125);
-      m_iNAKCount = 1;
-      m_iDecCount = 1;
+         m_iAvgNAKNum = (int)ceil(m_iAvgNAKNum * 0.875 + m_iNAKCount * 0.125);
+         m_iNAKCount = 1;
+         m_iDecCount = 1;
 
-      m_iLastDecSeq = m_iSndCurrSeqNo;
+         m_iLastDecSeq = m_iSndCurrSeqNo;
 
-      // remove global synchronization using randomization
-      srand(m_iLastDecSeq);
-      m_iDecRandom = (int)ceil(m_iAvgNAKNum * (double(rand()) / RAND_MAX));
-      if (m_iDecRandom < 1)
-         m_iDecRandom = 1;
-   }
-   else if ((m_iDecCount++ < 5) && (0 == (++m_iNAKCount % m_iDecRandom)))
-   {
-      // 0.875^5 = 0.51, rate should not be decreased by more than half within a congestion period
-      m_dPktSndPeriod = ceil(m_dPktSndPeriod * 1.125);
-      m_iLastDecSeq = m_iSndCurrSeqNo;
+         // remove global synchronization using randomization
+         srand(m_iLastDecSeq);
+         m_iDecRandom = (int)ceil(m_iAvgNAKNum * (double(rand()) / RAND_MAX));
+         if (m_iDecRandom < 1)
+            m_iDecRandom = 1;
+      }
+      else if ((m_iDecCount++ < 5) && (0 == (++m_iNAKCount % m_iDecRandom)))
+      {
+         // 0.875^5 = 0.51, rate should not be decreased by more than half within a congestion period
+         m_dPktSndPeriod = ceil(m_dPktSndPeriod * 1.125);
+         m_iLastDecSeq = m_iSndCurrSeqNo;
+      }
    }
 }
 
