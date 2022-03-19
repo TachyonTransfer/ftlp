@@ -1,5 +1,7 @@
 #include <cstring>
 #include <cmath>
+#include <memory>
+#include <openssl/ssl.h>
 #include "buffer.h"
 
 using namespace std;
@@ -122,8 +124,31 @@ void CSndBuffer::addBuffer(const char *data, int len, int ttl, bool order)
       m_iNextMsgNo = 1;
 }
 
-int CSndBuffer::addBufferFromFile(fstream &ifs, int len)
+int CSndBuffer::queueBufferFromFile(fstream &ifs, int len, ssl_ctx_t *ssl_ctx)
 {
+   std::unique_ptr<char[]> data{new char[len]};
+   int total = 0;
+   while (len > 0)
+   {
+      if (ifs.bad() || ifs.fail() || ifs.eof())
+         break;
+
+      ifs.read(data.get(), len);
+      int r_amnt = 0;
+      if ((r_amnt = ifs.gcount()) <= 0)
+         break;
+
+      r_amnt = SSL_write(ssl_ctx->ssl.get(), data.get(), r_amnt);
+      total += r_amnt;
+      len -= r_amnt;
+   }
+   return total;
+}
+
+int CSndBuffer::addBufferFromFile(fstream &ifs, int len, ssl_ctx_t *ssl_ctx)
+{
+   if (ssl_ctx != nullptr)
+      return queueBufferFromFile(ifs, len, ssl_ctx);
    int size = len / m_iMSS;
    if ((len % m_iMSS) != 0)
       size++;
@@ -383,8 +408,29 @@ int CRcvBuffer::readBuffer(char *data, int len)
    return len - rs;
 }
 
-int CRcvBuffer::readBufferToFile(fstream &ofs, int len)
+int CRcvBuffer::readTLSBufferToFile(fstream &ofs, int len, ssl_ctx_t *ssl_ctx)
 {
+   std::unique_ptr<char[]> data = std::make_unique<char[]>(len);
+   int rs = len;
+
+   while (rs > 0)
+   {
+      int r_amnt = SSL_read(ssl_ctx->ssl.get(), data.get(), rs);
+      if (r_amnt < 0)
+         break;
+      ofs.write(data.get(), r_amnt);
+      if (ofs.fail())
+         break;
+      rs -= r_amnt;
+   }
+
+   return len - rs;
+}
+
+int CRcvBuffer::readBufferToFile(fstream &ofs, int len, ssl_ctx_t *ssl_ctx)
+{
+   if (ssl_ctx)
+      return readTLSBufferToFile(ofs, len, ssl_ctx);
    int p = m_iStartPos;
    int lastack = m_iLastAckPos;
    int rs = len;

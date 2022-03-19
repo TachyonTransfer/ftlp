@@ -76,6 +76,8 @@ int main(int argc, char *argv[])
       return 0;
    }
 
+   UDT::setTLS(client, 1);
+
    // connect to the server, implict bind
    if (UDT::ERROR == UDT::connect(client, peer->ai_addr, peer->ai_addrlen))
    {

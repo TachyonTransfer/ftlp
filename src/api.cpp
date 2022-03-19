@@ -10,6 +10,9 @@
 #include <cstring>
 #include "api.h"
 #include "core.h"
+#include <cassert>
+#include <iostream>
+#include <cstdio>
 
 using namespace std;
 
@@ -678,6 +681,35 @@ UDTSOCKET CUDTUnited::accept(const UDTSOCKET listen, sockaddr *addr, int *addrle
 
       // copy address information of peer node
       memcpy(addr, locate(u)->m_pPeerAddr, *addrlen);
+   }
+   if (CUDT::getUDTHandle(listen)->isTLSServer() && CUDT::getUDTHandle(listen)->isTLSEnabled())
+      CUDT::getUDTHandle(u)->setTLS(CUDT::getUDTHandle(listen)->m_tlsType);
+   // std::string mode = (CUDT::getUDTHandle(u)->isTLSServer() ? "Server" : (CUDT::getUDTHandle(u)->isTLSClient() ? "Client" : "Unknown"));
+   // std::cout << "Mode = " << mode << std::endl;
+   if (CUDT::getUDTHandle(u)->isTLSServer())
+   {
+      if (!CUDT::createSecureSocket(u))
+      {
+         UDT::close(u);
+         return UDT::INVALID_SOCK;
+      }
+      auto ssl_ctx = CUDT::getSSLCtx(u);
+      SSL_set_accept_state(ssl_ctx->ssl.get());
+      ERR_clear_error();
+   retry:
+      auto ret_val = SSL_accept(ssl_ctx->ssl.get());
+      if (ret_val != 1)
+      {
+         if (SSL_get_error(ssl_ctx->ssl.get(), ret_val) == SSL_ERROR_WANT_READ)
+            goto retry;
+         std::cout << "ssl accept failed : " << SSL_get_error(ssl_ctx->ssl.get(), ret_val) << std::endl;
+         CUDT::tearSecureSocket(u);
+         UDT::close(u);
+         return UDT::INVALID_SOCK;
+      }
+      if (SSL_is_init_finished(ssl_ctx->ssl.get()))
+      {
+      }
    }
 
    return u;
@@ -2127,6 +2159,12 @@ namespace UDT
    UDTSOCKET socket(int af, int type, int protocol)
    {
       return CUDT::socket(af, type, protocol);
+   }
+
+   void setTLS(UDTSOCKET u, int mode)
+   {
+      auto handle = CUDT::getUDTHandle(u);
+      handle->setTLS((TLS_TYPE)mode);
    }
 
    int bind(UDTSOCKET u, const struct sockaddr *name, int namelen)

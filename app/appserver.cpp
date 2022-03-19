@@ -77,6 +77,8 @@ int main(int argc, char *argv[])
 
    UDTSOCKET recver;
 
+   UDT::setTLS(serv, 0);
+
    while (true)
    {
       if (UDT::INVALID_SOCK == (recver = UDT::accept(serv, (sockaddr *)&clientaddr, &addrlen)))
