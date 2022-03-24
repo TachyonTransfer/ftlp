@@ -91,7 +91,7 @@ double Tachyon::upload(const char *key, const char *filename, v8::Local<v8::Func
     hints.ai_socktype = SOCK_STREAM;
 
     UDTSOCKET fhandle = UDT::socket(hints.ai_family, hints.ai_socktype, hints.ai_protocol);
-#ifdef OSX
+#ifdef __APPLE__
     if (UDT::ERROR == UDT::setsockopt(fhandle, 0, UDP_RCVBUF, new int(1000000), sizeof(int)))
     {
         cout << "setsockopt: " << UDT::getlasterror().getErrorMessage() << endl;
