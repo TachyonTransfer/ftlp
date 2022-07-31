@@ -1,3 +1,41 @@
+/*****************************************************************************
+Copyright (c) 2001 - 2010, The Board of Trustees of the University of Illinois.
+All rights reserved.
+
+Copyright (c) 2020 - 2022, Tachyon Transfer, Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+* Redistributions of source code must retain the above
+  copyright notice, this list of conditions and the
+  following disclaimer.
+
+* Redistributions in binary form must reproduce the
+  above copyright notice, this list of conditions
+  and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the University of Illinois
+  nor the names of its contributors may be used to
+  endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*****************************************************************************/
+
 #ifndef __UDT_CORE_H__
 #define __UDT_CORE_H__
 
@@ -12,34 +50,11 @@
 #include "ccc.h"
 #include "cache.h"
 #include "queue.h"
-#include <openssl/bio.h>
-#include <openssl/err.h>
-#include <openssl/ssl.h>
-#include <memory>
-#include <unordered_map>
-#include <cassert>
-#include <iostream>
 
 enum UDTSockType
 {
    UDT_STREAM = 1,
    UDT_DGRAM
-};
-
-enum TLS_TYPE
-{
-   TLS_NONE = -1,
-   TLS_SERVER = 0,
-   TLS_CLIENT = 1
-};
-
-class udttls_exception
-{
-public:
-   std::string msg;
-   udttls_exception(const char *msg) : msg(msg) {}
-   udttls_exception() {}
-   udttls_exception(std::string msg) : msg(msg) {}
 };
 
 class CUDT
@@ -60,29 +75,6 @@ private: // constructor and desctructor
    CUDT(const CUDT &ancestor);
    const CUDT &operator=(const CUDT &) { return *this; }
    ~CUDT();
-
-   /* TLS extension */
-private:
-   static uptr<SSL_CTX> ssl_server_ctx;
-   static uptr<SSL_CTX> ssl_client_ctx;
-   static std::unordered_map<UDTSOCKET, std::unique_ptr<ssl_ctx_t>> mSSLInfo;
-   static bool initDone;
-   TLS_TYPE m_tlsType;
-   static bool createSecureSocket(UDTSOCKET socket);
-   static void tearSecureSocket(UDTSOCKET socket);
-   static std::string certificateFile;
-   static std::string privateKeyFile;
-   static bool loadConfig(std::string conf = "");
-
-public:
-   static ssl_ctx_t *getSSLCtx(UDTSOCKET socket);
-   static bool isInitialized(UDTSOCKET socket);
-   static void initTLS();
-   void setTLS(TLS_TYPE type);
-   constexpr bool isTLSServer() const { return m_tlsType == TLS_SERVER; }
-   constexpr bool isTLSClient() const { return m_tlsType == TLS_CLIENT; }
-   constexpr bool isTLSEnabled() const { return m_tlsType == TLS_CLIENT || m_tlsType == TLS_SERVER; }
-   /* TLS extension */
 
 public: // API
    static int startup();
@@ -331,6 +323,11 @@ private:                        // Status
    int m_iRTTVar;       // RTT variance
    int m_iDeliveryRate; // Packet arrival rate at the receiver side
 
+   double ambientLossRate; // background loss rate
+   double lowLossRate;     // constant to avoid div zero error
+   int m_Sent_adjusted;
+   int m_loss_adjusted;
+
    uint64_t m_ullLingerExpiration; // Linger expiration time (for GC to close a socket with data in sending buffer)
 
    CHandShake m_ConnReq;    // connection request
@@ -357,6 +354,8 @@ private:                             // Sending related data
 
    int32_t m_iISN; // Initial Sequence Number
 
+   bool isSend; // how to tell if server is sending or receiving to avoid extraneous acks
+
    void CCUpdate();
 
 private:                             // Receiving related data
@@ -365,6 +364,7 @@ private:                             // Receiving related data
    CACKWindow *m_pACKWindow;         // ACK history window
    CPktTimeWindow *m_pRcvTimeWindow; // Packet arrival time window
 
+   int32_t AckDebug;          // ACK debug on rec
    int32_t m_iRcvLastAck;     // Last sent ACK
    uint64_t m_ullLastAckTime; // Timestamp of last ACK
    int32_t m_iRcvLastAckAck;  // Last sent ACK that has been acknowledged
@@ -399,6 +399,8 @@ private: // Generation and processing of packets
    int packData(CPacket &packet, uint64_t &ts);
    int processData(CUnit *unit);
    int listen(sockaddr *addr, CPacket &packet);
+   void lossRate();
+   void lossRate(int);
 
 private:                         // Trace
    uint64_t m_StartTime;         // timestamp when the UDT entity is started

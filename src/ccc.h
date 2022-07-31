@@ -1,3 +1,41 @@
+/*****************************************************************************
+Copyright (c) 2001 - 2010, The Board of Trustees of the University of Illinois.
+All rights reserved.
+
+Copyright (c) 2020 - 2022, Tachyon Transfer, Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+* Redistributions of source code must retain the above
+  copyright notice, this list of conditions and the
+  following disclaimer.
+
+* Redistributions in binary form must reproduce the
+  above copyright notice, this list of conditions
+  and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the University of Illinois
+  nor the names of its contributors may be used to
+  endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*****************************************************************************/
+
 #ifndef __UDT_CCC_H__
 #define __UDT_CCC_H__
 
@@ -10,6 +48,7 @@ public:
    int m_iLength;
    int m_iBufferSize;
    int m_iIndex;
+   double lastValue;
    double *m_dBuffer;
 
    CircularBuffer(int bufferSize);
@@ -107,6 +146,16 @@ public:
    virtual void onPktSent(const CPacket *) {}
 
    // Functionality:
+   //    Callback function to be called when a data is sent.
+   // Parameters:
+   //    0) [in] seqno: the data sequence number.
+   //    1) [in] size: the payload size.
+   // Returned value:
+   //    None.
+
+   virtual void lossRate() {}
+
+   // Functionality:
    //    Callback function to be called when a data is received.
    // Parameters:
    //    0) [in] seqno: the data sequence number.
@@ -188,6 +237,7 @@ private:
    void setSndCurrSeqNo(int32_t seqno);
    void setRcvRate(int rcvrate);
    void setRTT(int rtt);
+   void setLossRate(double lossRate);
    void setVar(int rttVar);
 
 protected:
@@ -196,8 +246,11 @@ protected:
    double m_dPktSndPeriod; // Packet sending period, in microseconds
    double m_dCWndSize;     // Congestion window size, in packets
 
-   int m_iBandwidth;      // estimated bandwidth, packets per second
-   double m_dMaxCWndSize; // maximum cwnd size, in packets
+   int m_iBandwidth;           // estimated bandwidth, packets per second
+   double m_maxShare;          // max share of bandwidth
+   double m_maxShareReal;      // last real max share of bandwidth updated before a decrease
+   double m_lineVsShareThresh; // what bit per second difference should we consider increasing max share
+   double m_dMaxCWndSize;      // maximum cwnd size, in packets
 
    int m_iMSS;              // Maximum Packet Size, including all packet headers
    int32_t m_iSndCurrSeqNo; // current maximum seq no sent out
@@ -205,6 +258,7 @@ protected:
    int m_iRTT;              // current estimated RTT, microsecond
    double m_iRTTVar;
 
+   double m_congestionThresh;
    double m_dSigmaThreshold;
    CircularBuffer *m_RTTs;
    RunningStats m_Welford;
@@ -212,12 +266,22 @@ protected:
 
    // lifted up from UDT CC
    bool m_bSlowStart; // if in slow start phase
+   bool congBool;     // congestion State
    int m_iNAKCount;   // NAK counter
    int m_iAvgNAKNum;  // average number of NAKs per congestion
    int m_iDecCount;   // number of decreases in a congestion epoch
 
+   uint64_t m_LastDecreaseTime;
+   uint64_t m_maxShareUpdateTime;
+   int m_iDecCountTwo; // number of decreases in a congestion epoch
+
+   double ambientLossRate; // loss rate
+   int sentPackets;        // num sent packets
+   int lossCount;          // num losses less congestion losses
+
    double minRtt;         // min rtt
    int minRttWindow;      // number of decreases in a congestion epoch
+   double minCongRtt;     // min cong rtt for fairness
    double rttDif;         // dif  between rtt and minRtt
    double debugWelfordSd; // welford sd
    int rttCounter;
@@ -263,6 +327,9 @@ public:
 public:
    virtual void init();
    virtual void onACK(int32_t);
+   virtual void onCongestion(double);
+   virtual void onNoCongestion();
+   virtual double getShareOfBandwidth(double, double, double);
    virtual void onLoss(const int32_t *, int);
    virtual void onTimeout();
 

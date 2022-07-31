@@ -1,3 +1,41 @@
+/*****************************************************************************
+Copyright (c) 2001 - 2010, The Board of Trustees of the University of Illinois.
+All rights reserved.
+
+Copyright (c) 2020 - 2022, Tachyon Transfer, Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+* Redistributions of source code must retain the above
+  copyright notice, this list of conditions and the
+  following disclaimer.
+
+* Redistributions in binary form must reproduce the
+  above copyright notice, this list of conditions
+  and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the University of Illinois
+  nor the names of its contributors may be used to
+  endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*****************************************************************************/
+
 #ifndef WIN32
 #include <unistd.h>
 #include <netdb.h>
@@ -5,7 +43,6 @@
 #include <cerrno>
 #include <cstring>
 #include <cstdlib>
-#include <sys/stat.h>
 #else
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -17,6 +54,7 @@
 #include <sstream>
 #include "queue.h"
 #include "core.h"
+#include <iostream>
 
 using namespace std;
 
@@ -38,7 +76,7 @@ const int CUDT::m_iVersion = 4;
 const int CUDT::m_iSYNInterval = 10000;
 const int CUDT::m_iSelfClockInterval = 64;
 
-CUDT::CUDT() : m_tlsType(TLS_NONE)
+CUDT::CUDT()
 {
    m_pSndBuffer = NULL;
    m_pRcvBuffer = NULL;
@@ -90,9 +128,11 @@ CUDT::CUDT() : m_tlsType(TLS_NONE)
    m_bBroken = false;
    m_bPeerHealth = true;
    m_ullLingerExpiration = 0;
+
+   isSend = false;
 }
 
-CUDT::CUDT(const CUDT &ancestor) : m_tlsType(TLS_NONE)
+CUDT::CUDT(const CUDT &ancestor)
 {
    m_pSndBuffer = NULL;
    m_pRcvBuffer = NULL;
@@ -461,6 +501,9 @@ void CUDT::open()
    m_LastSampleTime = CTimer::getTime();
    m_llTraceSent = m_llTraceRecv = m_iTraceSndLoss = m_iTraceRcvLoss = m_iTraceRetrans = m_iSentACK = m_iRecvACK = m_iSentNAK = m_iRecvNAK = 0;
    m_llSndDuration = m_llSndDurationTotal = 0;
+   m_Sent_adjusted = m_loss_adjusted = 0;
+   ambientLossRate = pow(10, -4);
+   lowLossRate = pow(10, -4);
 
    // structures for queue
    if (NULL == m_pSNode)
@@ -767,34 +810,6 @@ POST_CONNECT:
    // acknowledde any waiting epolls to write
    s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, UDT_EPOLL_OUT, true);
 
-   // try tls handshake, if enabled
-   if (m_tlsType != TLS_NONE)
-   {
-      assert(m_tlsType == TLS_CLIENT);
-      if (!createSecureSocket(m_SocketID))
-      {
-         CUDT::close(m_SocketID);
-         return UDT::ERROR;
-      }
-      auto ssl_ctx = getSSLCtx(m_SocketID);
-      SSL_set_connect_state(ssl_ctx->ssl.get());
-      ERR_clear_error();
-      auto ret_val = SSL_connect(ssl_ctx->ssl.get());
-      if (ret_val != 1)
-      {
-         ERR_print_errors_fp(stdout);
-         tearSecureSocket(m_SocketID);
-         UDT::close(m_SocketID);
-         return UDT::ERROR;
-      }
-      if (!SSL_is_init_finished(ssl_ctx->ssl.get()))
-      {
-         tearSecureSocket(m_SocketID);
-         UDT::close(m_SocketID);
-         return UDT::ERROR;
-      }
-   }
-
    return 0;
 }
 
@@ -1034,7 +1049,9 @@ int CUDT::send(const char *data, int len)
          if (m_iSndTimeOut < 0)
          {
             while (!m_bBroken && m_bConnected && !m_bClosing && (m_iSndBufSize <= m_pSndBuffer->getCurrBufSize()) && m_bPeerHealth)
+            {
                pthread_cond_wait(&m_SendBlockCond, &m_SendBlockLock);
+            }
          }
          else
          {
@@ -1092,19 +1109,11 @@ int CUDT::send(const char *data, int len)
    if (0 == m_pSndBuffer->getCurrBufSize())
       m_llSndDurationCounter = CTimer::getTime();
 
-   if (m_tlsType != TLS_NONE)
-   {
-      auto handle = CUDT::getSSLCtx(m_SocketID);
-      SSL_write(handle->ssl.get(), data, size);
-   }
-   else
-   {
-      // insert the user buffer into the sening list
-      m_pSndBuffer->addBuffer(data, size);
+   // insert the user buffer into the sening list
+   m_pSndBuffer->addBuffer(data, size);
 
-      // insert this socket to snd list if it is not on the list yet
-      m_pSndQueue->m_pSndUList->update(this, false);
-   }
+   // insert this socket to snd list if it is not on the list yet
+   m_pSndQueue->m_pSndUList->update(this, false);
 
    if (m_iSndBufSize <= m_pSndBuffer->getCurrBufSize())
    {
@@ -1188,17 +1197,7 @@ int CUDT::recv(char *data, int len)
    else if ((m_bBroken || m_bClosing) && (0 == m_pRcvBuffer->getRcvDataSize()))
       throw CUDTException(2, 1, 0);
 
-   int res = 0;
-
-   if (m_tlsType != TLS_NONE)
-   {
-      auto handle = CUDT::getSSLCtx(m_SocketID);
-      res = SSL_read(handle->ssl.get(), data, len);
-   }
-   else
-   {
-      res = m_pRcvBuffer->readBuffer(data, len);
-   }
+   int res = m_pRcvBuffer->readBuffer(data, len);
 
    if (m_pRcvBuffer->getRcvDataSize() <= 0)
    {
@@ -1486,12 +1485,7 @@ int64_t CUDT::sendfile(fstream &ifs, int64_t &offset, int64_t size, int block)
       if (0 == m_pSndBuffer->getCurrBufSize())
          m_llSndDurationCounter = CTimer::getTime();
 
-      int64_t sentsize = 0;
-
-      if (m_tlsType == TLS_NONE)
-         sentsize = m_pSndBuffer->addBufferFromFile(ifs, unitsize);
-      else
-         sentsize = m_pSndBuffer->addBufferFromFile(ifs, unitsize, CUDT::getSSLCtx(m_SocketID));
+      int64_t sentsize = m_pSndBuffer->addBufferFromFile(ifs, unitsize);
 
       if (sentsize > 0)
       {
@@ -1569,12 +1563,7 @@ int64_t CUDT::recvfile(fstream &ofs, int64_t &offset, int64_t size, int block)
          throw CUDTException(2, 1, 0);
 
       unitsize = int((torecv >= block) ? block : torecv);
-      recvsize = 0;
-
-      if (m_tlsType == TLS_NONE)
-         recvsize = m_pRcvBuffer->readBufferToFile(ofs, unitsize);
-      else
-         recvsize = m_pRcvBuffer->readBufferToFile(ofs, unitsize, CUDT::getSSLCtx(m_SocketID));
+      recvsize = m_pRcvBuffer->readBufferToFile(ofs, unitsize);
 
       if (recvsize > 0)
       {
@@ -1660,10 +1649,15 @@ void CUDT::sample(CPerfMon *perf, bool clear)
 
    perf->unAckRec = m_iRcvUnack;
    perf->rtts = m_pCC->m_RTTs->m_dBuffer;
+   perf->bandwidths = m_pRcvTimeWindow->m_piProbeWindow;
    perf->sigmaThreshold = m_pCC->m_dSigmaThreshold;
    perf->minR = m_pCC->minRtt;
    perf->sd = m_pCC->debugWelfordSd;
    perf->rttVar = m_iRTTVar;
+
+   perf->sentAdjusted = m_llSentTotal;
+   perf->ambientLoss = m_pCC->ambientLossRate;
+   perf->lossAdjusted = m_pCC->lossCount;
 
 #ifndef WIN32
    if (0 == pthread_mutex_trylock(&m_ConnectionLock))
@@ -1826,6 +1820,8 @@ void CUDT::sendCtrl(int pkttype, void *lparam, void *rparam, int size)
 
       uint64_t currtime;
       CTimer::rdtsc(currtime);
+
+      AckDebug = ack;
 
       // There are new received packets to acknowledge, update related information.
       if (CSeqNo::seqcmp(ack, m_iRcvLastAck) > 0)
@@ -2127,6 +2123,11 @@ void CUDT::processCtrl(CPacket &ctrlpkt)
          m_pCC->setRTT(m_iRTT);
          m_pCC->setVar(m_iRTTVar);
          m_iSndLastAck = ack;
+
+         lossRate();
+
+         // adding a 1000 does nothing in the long term;
+         m_pCC->setLossRate(m_llSentTotal + 1000);
       }
 
       if (ctrlpkt.getLength() > 20)
@@ -2174,7 +2175,6 @@ void CUDT::processCtrl(CPacket &ctrlpkt)
       {
          // discard it if it is a repeated ACK
          m_ullLastRspTime = tempResponseTime;
-
          if (offset == 0)
          {
             ++m_iRecvACK;
@@ -2431,8 +2431,43 @@ int CUDT::packData(CPacket &packet, uint64_t &ts)
    if ((0 != m_ullTargetTime) && (entertime > m_ullTargetTime))
       m_ullTimeDiff += entertime - m_ullTargetTime;
 
+   if (1 == (CSeqNo::incseq(m_iSndCurrSeqNo) & 0xF))
+   {
+      // If no loss, pack a new packet.
+
+      // check congestion/flow window limit
+      int cwnd = (int)m_dCongestionWindow;
+      if (cwnd >= CSeqNo::seqlen(m_iSndLastAck, CSeqNo::incseq(m_iSndCurrSeqNo)) - m_iRcvUnack)
+      {
+         if (0 != (payload = m_pSndBuffer->readData(&(packet.m_pcData), packet.m_iMsgNo)))
+         {
+            m_iSndCurrSeqNo = CSeqNo::incseq(m_iSndCurrSeqNo);
+            m_pCC->setSndCurrSeqNo(m_iSndCurrSeqNo);
+
+            packet.m_iSeqNo = m_iSndCurrSeqNo;
+
+            // every 16 (0xF) packets, a packet pair is sent
+            if (0 == (packet.m_iSeqNo & 0xF))
+               probe = true;
+         }
+         else
+         {
+            m_ullTargetTime = 0;
+            m_ullTimeDiff = 0;
+            ts = 0;
+            return 0;
+         }
+      }
+      else
+      {
+         m_ullTargetTime = 0;
+         m_ullTimeDiff = 0;
+         ts = 0;
+         return 0;
+      }
+   }
    // Loss retransmission always has higher priority.
-   if ((packet.m_iSeqNo = m_pSndLossList->getLostSeq()) >= 0)
+   else if ((packet.m_iSeqNo = m_pSndLossList->getLostSeq()) >= 0)
    {
       // protect m_iSndLastDataAck from updating by ACK processing
       CGuard ackguard(m_AckLock);
@@ -2543,6 +2578,39 @@ int CUDT::packData(CPacket &packet, uint64_t &ts)
    return payload;
 }
 
+void CUDT::lossRate()
+{
+   // we avoid updating runningLossRate if we are causing congestion
+   if (m_llSentTotal == 0)
+   {
+      ambientLossRate = lowLossRate;
+   }
+   else
+   {
+      ambientLossRate = m_iRetransTotal / m_llSentTotal;
+   }
+
+   if (ambientLossRate < pow(10, -6))
+      ambientLossRate = lowLossRate;
+}
+
+void CUDT::lossRate(int numLostPackets)
+{
+   // we avoid updating runningLossRate if we are causing congestion
+   if (m_pCC->m_iRTT < 1.15 * m_pCC->minRtt)
+   {
+      double Bprime = m_iBandwidth * (m_iMSS)*8.0;
+      double currentSendingRate = (1000000.0 / m_pCC->m_dPktSndPeriod) * (m_iMSS)*8.0;
+      if (currentSendingRate < Bprime)
+      {
+         m_loss_adjusted = m_loss_adjusted + numLostPackets;
+         ambientLossRate = (double)m_loss_adjusted / (double)m_Sent_adjusted;
+         if (ambientLossRate < pow(10, -6))
+            ambientLossRate = lowLossRate;
+      }
+   }
+}
+
 int CUDT::processData(CUnit *unit)
 {
    CPacket &packet = unit->m_Packet;
@@ -2560,9 +2628,9 @@ int CUDT::processData(CUnit *unit)
 
    // check if it is probing packet pair
    if (0 == (packet.m_iSeqNo & 0xF))
-      m_pRcvTimeWindow->probe1Arrival();
+      m_pRcvTimeWindow->probe1Arrival(packet.m_iSeqNo);
    else if (1 == (packet.m_iSeqNo & 0xF))
-      m_pRcvTimeWindow->probe2Arrival();
+      m_pRcvTimeWindow->probe2Arrival(packet.m_iSeqNo);
 
    ++m_llTraceRecv;
    ++m_llRecvTotal;
@@ -2833,178 +2901,4 @@ void CUDT::removeEPoll(const int eid)
    CGuard::enterCS(s_UDTUnited.m_EPoll.m_EPollLock);
    m_sPollID.erase(eid);
    CGuard::leaveCS(s_UDTUnited.m_EPoll.m_EPollLock);
-}
-
-/* TLS extension */
-uptr<SSL_CTX> CUDT::ssl_server_ctx;
-uptr<SSL_CTX> CUDT::ssl_client_ctx;
-std::unordered_map<UDTSOCKET, std::unique_ptr<ssl_ctx_t>> CUDT::mSSLInfo;
-bool CUDT::initDone = false;
-std::string CUDT::certificateFile = "server.crt";
-std::string CUDT::privateKeyFile = "key.pem";
-
-void CUDT::setTLS(TLS_TYPE type)
-{
-   CUDT::m_tlsType = type;
-}
-
-bool CUDT::isInitialized(UDTSOCKET socket)
-{
-   if (!initDone)
-      CUDT::initTLS();
-   return initDone;
-}
-
-void CUDT::initTLS()
-{
-   if (initDone)
-      return;
-   loadConfig();
-   SSL_library_init();
-   OpenSSL_add_all_algorithms();
-   SSL_load_error_strings();
-   ERR_load_BIO_strings();
-   ERR_load_crypto_strings();
-   ssl_server_ctx.reset(SSL_CTX_new(SSLv23_server_method()));
-   SSL_CTX_set_options(CUDT::ssl_server_ctx.get(), SSL_OP_ALL | SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1);
-   SSL_CTX_set_verify(CUDT::ssl_server_ctx.get(), SSL_VERIFY_NONE, nullptr);
-
-   ssl_client_ctx.reset(SSL_CTX_new(SSLv23_client_method()));
-   SSL_CTX_set_options(CUDT::ssl_client_ctx.get(), SSL_OP_ALL | SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1);
-   SSL_CTX_set_verify(CUDT::ssl_client_ctx.get(), SSL_VERIFY_NONE, nullptr);
-   if (1 != SSL_CTX_set_default_verify_paths(ssl_client_ctx.get()))
-      throw udttls_exception("unable to load default keystore");
-   initDone = true;
-}
-
-void CUDT::tearSecureSocket(UDTSOCKET socket)
-{
-   auto it = mSSLInfo.find(socket);
-   if (it != mSSLInfo.end())
-   {
-      mSSLInfo.erase(it);
-   }
-}
-
-bool CUDT::createSecureSocket(UDTSOCKET socket)
-{
-   if (!isInitialized(socket))
-      return false;
-   if (socket == UDT::INVALID_SOCK)
-      return false;
-   std::unique_ptr<ssl_ctx_t> ptr{new ssl_ctx_t};
-   ptr->socket = socket;
-   if (CUDT::getUDTHandle(socket)->isTLSServer())
-   {
-      ptr->ssl.reset(SSL_new(ssl_server_ctx.get()));
-      if (1 != SSL_use_certificate_file(ptr->ssl.get(), certificateFile.c_str(), SSL_FILETYPE_PEM))
-      {
-         throw udttls_exception("server certificate load failed\n");
-      }
-      if (1 != SSL_use_PrivateKey_file(ptr->ssl.get(), privateKeyFile.c_str(), SSL_FILETYPE_PEM))
-      {
-         throw udttls_exception("server privatekey load failed\n");
-      }
-      SSL_set_accept_state(ptr->ssl.get());
-   }
-   else
-   {
-      ptr->ssl.reset(SSL_new(ssl_client_ctx.get()));
-      // if (1 != SSL_CTX_set_default_verify_paths(CUDT::ssl_client_ctx.get()))
-      //    throw udttls_exception("unable to load default keystore");
-      SSL_set_connect_state(ptr->ssl.get());
-   }
-
-   SSL_set_mode(ptr->ssl.get(), SSL_MODE_AUTO_RETRY);
-
-   ptr->biom = BIO_meth_new(BIO_TYPE_BIO, "udt-bio");
-
-   BIO_meth_set_read(ptr->biom, [](BIO *bio, char *data, int len) -> int
-                     {
-                        UDTSOCKET ingress = *reinterpret_cast<UDTSOCKET *>(BIO_get_data(bio));
-                        auto handle = CUDT::getUDTHandle(ingress);
-                        auto ssl_ctx = CUDT::getSSLCtx(ingress);
-                        auto r_val = 0;
-                        if (!SSL_is_init_finished(ssl_ctx->ssl.get()))
-                        {
-                           while ((r_val = handle->m_pRcvBuffer->readBuffer(data, len)) == 0)
-                              ;
-                        }
-                        if (r_val < 0)
-                           return r_val;
-                        //else {
-                        int remain = len - r_val;
-                        int offset = r_val;
-                        while (remain)
-                        {
-                           r_val = handle->m_pRcvBuffer->readBuffer(&data[offset], remain);
-                           if (r_val < 0)
-                              break;
-                           remain -= r_val;
-                           offset += r_val;
-                        }
-                        r_val = len - remain;
-                        //}
-                        return r_val; });
-
-   BIO_meth_set_write(ptr->biom, [](BIO *bio, const char *data, int len) -> int
-                      {
-                         UDTSOCKET outgress = *reinterpret_cast<UDTSOCKET *>(BIO_get_data(bio));
-                         auto handle = CUDT::getUDTHandle(outgress);
-                         auto ssl_ctx = CUDT::getSSLCtx(outgress);
-                         if (!SSL_is_init_finished(ssl_ctx->ssl.get()))
-                            pthread_mutex_lock(&handle->m_SendLock);
-                         handle->m_pSndBuffer->addBuffer(data, len, -1, true);
-                         handle->m_pSndQueue->m_pSndUList->update(handle, false);
-                         if (!SSL_is_init_finished(ssl_ctx->ssl.get()))
-                            pthread_mutex_unlock(&handle->m_SendLock);
-                         return len; });
-
-   BIO_meth_set_puts(ptr->biom, [](BIO *bio, const char *data) -> int
-                     {
-                        UDTSOCKET outgress = *reinterpret_cast<UDTSOCKET *>(BIO_get_data(bio));
-                        auto len = strlen(data);
-                        return BIO_write(bio, data, len); });
-
-   BIO_meth_set_ctrl(ptr->biom, [](BIO *bio, int cmd, long largs, void *args) -> long
-                     {
-                        if (cmd == SSL_ERROR_WANT_CLIENT_HELLO_CB)
-                           return SSL_CLIENT_HELLO_SUCCESS;
-                        return 0; });
-
-   ptr->bio = BIO_new(ptr->biom);
-   BIO_set_data(ptr->bio, &ptr->socket);
-
-   SSL_set_bio(ptr->ssl.get(), ptr->bio, ptr->bio);
-
-   mSSLInfo[socket] = std::move(ptr);
-
-   return true;
-}
-
-ssl_ctx_t *CUDT::getSSLCtx(UDTSOCKET socket)
-{
-   if (mSSLInfo.find(socket) == mSSLInfo.end())
-      return nullptr;
-   return mSSLInfo[socket].get();
-}
-
-bool CUDT::loadConfig(std::string conf)
-{
-   // string loc = "";
-   // string home = getenv("HOME");
-   // struct stat buffer;
-
-   // char *system_env = getenv("TACHYON_HOME");
-   // if (NULL != system_env)
-   //    loc = string(system_env) + "/";
-   // else
-   // {
-   //    string tachyon_path = home + "/.tachyon/";
-   //    if (stat(tachyon_path.c_str(), &buffer) == 0)
-   //       loc = home + "/.tachyon/";
-   // }
-   certificateFile = "./ssl/server.crt";
-   privateKeyFile = "./ssl/key.pem";
-   return true;
 }

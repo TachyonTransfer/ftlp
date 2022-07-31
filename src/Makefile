@@ -8,7 +8,23 @@ ifndef arch
    arch = AMD64
 endif
 
-CCFLAGS = -fPIC -Wall -Wextra -w -D$(os) -finline-functions -g -O3 -fno-strict-aliasing -fvisibility=hidden
+CCFLAGS = -fPIC -Wall -Wextra -D$(os) -finline-functions -O3 -fno-strict-aliasing -fvisibility=hidden
+
+ifeq ($(arch), IA32)
+   CCFLAGS += -DIA32
+endif
+
+ifeq ($(arch), POWERPC)
+   CCFLAGS += -mcpu=powerpc
+endif
+
+ifeq ($(arch), SPARC)
+   CCFLAGS += -DSPARC
+endif
+
+ifeq ($(arch), IA64)
+   CCFLAGS += -DIA64
+endif
 
 ifeq ($(arch), AMD64)
    CCFLAGS += -DAMD64
@@ -26,7 +42,7 @@ libudt.so: $(OBJS)
 ifneq ($(os), OSX)
 	$(C++) -shared -o $@ $^
 else
-	$(C++) -dynamiclib -o libudt.dylib -lstdc++ -lpthread -lm -lssl $^
+	$(C++) -dynamiclib -o libudt.dylib -lstdc++ -lpthread -lm $^
 endif
 
 libudt.a: $(OBJS)

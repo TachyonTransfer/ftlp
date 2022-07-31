@@ -1,3 +1,41 @@
+/*****************************************************************************
+Copyright (c) 2001 - 2010, The Board of Trustees of the University of Illinois.
+All rights reserved.
+
+Copyright (c) 2020 - 2022, Tachyon Transfer, Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+* Redistributions of source code must retain the above
+  copyright notice, this list of conditions and the
+  following disclaimer.
+
+* Redistributions in binary form must reproduce the
+  above copyright notice, this list of conditions
+  and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the University of Illinois
+  nor the names of its contributors may be used to
+  endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*****************************************************************************/
+
 #ifndef __UDT_H__
 #define __UDT_H__
 
@@ -16,10 +54,6 @@
 #include <set>
 #include <string>
 #include <vector>
-#include <memory>
-#include <openssl/bio.h>
-#include <openssl/err.h>
-#include <openssl/ssl.h>
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -188,11 +222,16 @@ struct CPerfMon
    double sendDeliveryRate; // m_iDeliveryRate, num of packets arriving * paylod per second;
 
    double *rtts;
+   int *bandwidths;
    double sigmaThreshold;
    double minR; // min rtt
    double sd;
    bool slowStart;
    int rttVar;
+
+   int sentAdjusted;
+   double ambientLoss;
+   int lossAdjusted;
 
    int bufferSize;
    int sendLastDataAck;
@@ -313,7 +352,6 @@ namespace UDT
 
    UDT_API int startup();
    UDT_API int cleanup();
-   UDT_API void setTLS(UDTSOCKET u, int mode);
    UDT_API UDTSOCKET socket(int af, int type, int protocol);
    UDT_API int bind(UDTSOCKET u, const struct sockaddr *name, int namelen);
    UDT_API int bind2(UDTSOCKET u, UDPSOCKET udpsock);
@@ -356,41 +394,5 @@ namespace UDT
    UDT_API UDTSTATUS getsockstate(UDTSOCKET u);
 
 } // namespace UDT
-
-template <class T>
-struct DeAllocOf;
-template <>
-struct DeAllocOf<BIO>
-{
-   void operator()(BIO *bio) {}
-};
-template <>
-struct DeAllocOf<BIO_METHOD>
-{
-   void operator()(BIO_METHOD *method) {}
-};
-template <>
-struct DeAllocOf<SSL>
-{
-   void operator()(SSL *p) { SSL_free(p); }
-};
-template <>
-struct DeAllocOf<SSL_CTX>
-{
-   void operator()(SSL_CTX *ctx) { SSL_CTX_free(ctx); }
-};
-
-template <class T>
-using uptr = std::unique_ptr<T, DeAllocOf<T>>;
-template <class T>
-using sptr = std::shared_ptr<T>;
-
-typedef struct ssl_ctx_s
-{
-   UDTSOCKET socket;
-   BIO *bio;
-   BIO_METHOD *biom;
-   uptr<SSL> ssl;
-} ssl_ctx_t;
 
 #endif

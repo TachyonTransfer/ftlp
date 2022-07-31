@@ -1,3 +1,41 @@
+/*****************************************************************************
+Copyright (c) 2001 - 2010, The Board of Trustees of the University of Illinois.
+All rights reserved.
+
+Copyright (c) 2020 - 2022, Tachyon Transfer, Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+* Redistributions of source code must retain the above
+  copyright notice, this list of conditions and the
+  following disclaimer.
+
+* Redistributions in binary form must reproduce the
+  above copyright notice, this list of conditions
+  and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the University of Illinois
+  nor the names of its contributors may be used to
+  endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*****************************************************************************/
+
 #include <cmath>
 #include "common.h"
 #include "window.h"
@@ -113,7 +151,8 @@ CPktTimeWindow::CPktTimeWindow(int asize, int psize) : m_iAWSize(asize),
                                                        m_iMinPktSndInt(1000000),
                                                        m_LastArrTime(),
                                                        m_CurrArrTime(),
-                                                       m_ProbeTime()
+                                                       m_ProbeTime(),
+                                                       m_iProbe1SeqNo(0)
 {
    m_piPktWindow = new int[m_iAWSize];
    m_piPktReplica = new int[m_iAWSize];
@@ -226,19 +265,23 @@ void CPktTimeWindow::onPktArrival()
    m_LastArrTime = m_CurrArrTime;
 }
 
-void CPktTimeWindow::probe1Arrival()
+void CPktTimeWindow::probe1Arrival(int32_t seqNo)
 {
+   m_iProbe1SeqNo = seqNo;
    m_ProbeTime = CTimer::getTime();
 }
 
-void CPktTimeWindow::probe2Arrival()
+void CPktTimeWindow::probe2Arrival(int32_t seqNo)
 {
-   m_CurrArrTime = CTimer::getTime();
+   if (seqNo - m_iProbe1SeqNo == 1)
+   {
+      m_CurrArrTime = CTimer::getTime();
 
-   // record the probing packets interval
-   *(m_piProbeWindow + m_iProbeWindowPtr) = int(m_CurrArrTime - m_ProbeTime);
-   // the window is logically circular
-   ++m_iProbeWindowPtr;
-   if (m_iProbeWindowPtr == m_iPWSize)
-      m_iProbeWindowPtr = 0;
+      // record the probing packets interval
+      *(m_piProbeWindow + m_iProbeWindowPtr) = int(m_CurrArrTime - m_ProbeTime);
+      // the window is logically circular
+      ++m_iProbeWindowPtr;
+      if (m_iProbeWindowPtr == m_iPWSize)
+         m_iProbeWindowPtr = 0;
+   }
 }
