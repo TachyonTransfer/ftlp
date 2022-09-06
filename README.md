@@ -1,4 +1,4 @@
-# Faster-Than-Light Protocol: _Tachyon's Fast, BSD-Style Socket API_
+# UDT-Tachyon Protocol: _Tachyon's Fast, BSD-Style Socket API_
 
 UDT-Tachyon is an application level data transfer protocol designed to move large datasets at high speed across a network. UDT-Tachyon continues the work of UDT, and uses UDP to transfer data, but uses its own  congestion control algorithms.
 
