@@ -20,7 +20,7 @@ make
 
 ./recvfile [IP of sender] [port number of sender] [file name on sender] [new name of file on receiver]
 
-An example to clarify:
+### An example to clarify:
 
 #### on sender:
 
