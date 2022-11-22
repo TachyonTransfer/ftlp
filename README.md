@@ -41,21 +41,21 @@ You can find our tachyon testing AMI on AWS and launch an ec2 instance with it. 
 cd ftlp/src/
 export LD_LIBRARY_PATH=$(pwd):$$LD_LIBRARY_PATH
 
-### Add packet loss percentages using iptables, expressed as a fraction: --every flag is denominator, --packet flag is numerator
+#### Add packet loss percentages using iptables, expressed as a fraction: --every flag is denominator, --packet flag is numerator
 sudo iptables -A FORWARD -p udp -m statistic --mode nth --every 1000 --packet 1 -j DROP
-### Remove packet loss rules from iptables
+#### Remove packet loss rules from iptables
 sudo iptables -D FORWARD -p udp -m statistic --mode nth --every 1000 --packet 1 -j DROP
-### Set traffic shaping params in env: Delay(ms), Rate(Mbps)
+#### Set traffic shaping params in env: Delay(ms), Rate(Mbps)
 DELAY_MS=20
 RATE_MBIT=500
-### Math to determine buffer size, expressed as number of packets
+#### Math to determine buffer size, expressed as number of packets
 BUF_PKTS=500
 BDP_BYTES=$(echo "($DELAY_MS/1000.0)*($RATE_MBIT*1000000.0/8.0)" | bc -q -l)
 BDP_PKTS=$(echo "$BDP_BYTES/1500" | bc -q)
 LIMIT_PKTS=$(echo "$BDP_PKTS+$BUF_PKTS" | bc -q)
-### Adding queing discipline to loopback interface (lo) with the given params
+#### Adding queing discipline to loopback interface (lo) with the given params
 sudo tc qdisc replace dev lo root netem delay ${DELAY_MS}ms rate ${RATE_MBIT}Mbit limit ${LIMIT_PKTS}
-### Show queuing disciplein on loopback interface
+#### Show queuing disciplein on loopback interface
 sudo tc qdisc show dev lo
-### Delete queuing disciplein on loopback interface
+#### Delete queuing disciplein on loopback interface
 sudo tc qdisc del dev lo root
