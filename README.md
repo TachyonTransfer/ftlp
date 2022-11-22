@@ -35,7 +35,8 @@ After a file transfer is complete you will see stats on the file speed and time.
 
 ## For Testing:
 
-You can find our tachyon testing AMI on AWS (N Virginia region) and launch an ec2 instance with it. Once you do that you can test performance
+You can find our tachyon testing AMI (
+Tachyon FTLP/UDT Performance Testing Image) on AWS (N Virginia region) and launch an ec2 instance with it. Once you do that you can test performance
 
 ### Add linker path export to run executables
 cd ftlp/src/
